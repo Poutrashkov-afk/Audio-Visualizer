@@ -196,25 +196,39 @@ void app_run(App *app) {
     printf("  Audio Visualizer (C/SDL2)\n");
     printf("========================================\n\n");
 
-    /* Start audio */
     audio_start(&app->audio, app->settings.device_index,
                 app->settings.sample_rate, app->settings.chunk_size);
 
+    float health_check_timer = 0.0f;
+    float status_timer = 0.0f;
+    char status_msg[128] = "";
+
     while (app->running) {
-        /* Timing */
         uint64_t now = SDL_GetPerformanceCounter();
         app->frame_time = (float)(now - app->last_time) / (float)app->perf_freq;
         app->last_time = now;
 
-        /* FPS smoothing */
         if (app->frame_time > 0.0f)
             app->fps = app->fps * 0.9f + (1.0f / app->frame_time) * 0.1f;
 
-        /* Help timer */
         if (app->help_timer > 0.0f && app->help_timer < 999.0f)
             app->help_timer -= app->frame_time;
 
-        /* Events */
+        if (status_timer > 0.0f)
+            status_timer -= app->frame_time;
+
+        /* Periodic health check — every 2 seconds */
+        health_check_timer += app->frame_time;
+        if (health_check_timer > 2.0f) {
+            health_check_timer = 0.0f;
+
+            if (!audio_check_health(&app->audio)) {
+                snprintf(status_msg, sizeof(status_msg),
+                         "Audio stream lost — restarting...");
+                status_timer = 3.0f;
+            }
+        }
+
         handle_events(app);
 
         /* Get audio data */
@@ -229,7 +243,6 @@ void app_run(App *app) {
                     app->settings.min_frequency,
                     app->settings.max_frequency);
 
-        /* Compute audio levels */
         memcpy(app->audio.current_chunk, app->audio_chunk,
                sizeof(float) * app->settings.chunk_size);
         audio_compute_levels(&app->audio);
@@ -250,13 +263,37 @@ void app_run(App *app) {
                     &app->settings, app->fps, app->audio.rms_level,
                     app->audio.running, sw, sh);
 
+        /* Status message */
+        if (status_timer > 0.0f && app->ui.font) {
+            SDL_Color green = {200, 255, 200, 255};
+            float alpha = status_timer < 0.5f ? status_timer / 0.5f : 1.0f;
+            SDL_Color col = {
+                (uint8_t)(green.r * alpha),
+                (uint8_t)(green.g * alpha),
+                (uint8_t)(green.b * alpha),
+                255
+            };
+
+            SDL_Surface *surf = TTF_RenderUTF8_Blended(app->ui.font, status_msg, col);
+            if (surf) {
+                SDL_Texture *tex = SDL_CreateTextureFromSurface(app->sdl_renderer, surf);
+                int tx = (sw - surf->w) / 2;
+                int ty = sh - 80;
+                SDL_Rect bg = {tx - 10, ty - 5, surf->w + 20, surf->h + 10};
+                SDL_SetRenderDrawColor(app->sdl_renderer, 0, 0, 0, (uint8_t)(150 * alpha));
+                SDL_RenderFillRect(app->sdl_renderer, &bg);
+                SDL_Rect dst = {tx, ty, surf->w, surf->h};
+                SDL_RenderCopy(app->sdl_renderer, tex, NULL, &dst);
+                SDL_DestroyTexture(tex);
+                SDL_FreeSurface(surf);
+            }
+        }
+
         /* Settings panel */
         ui_draw(&app->ui, app->sdl_renderer, sw, sh);
 
-        /* Present */
         SDL_RenderPresent(app->sdl_renderer);
 
-        /* Frame cap */
         if (app->settings.fps_cap > 0) {
             float target = 1.0f / app->settings.fps_cap;
             float elapsed = (float)(SDL_GetPerformanceCounter() - now) / (float)app->perf_freq;

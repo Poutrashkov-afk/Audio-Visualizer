@@ -11,11 +11,11 @@ typedef struct {
     int chunk_size;
     int channels;
 
-    float *buffer;            /* circular buffer */
+    float *buffer;
     int buffer_size;
     volatile int write_pos;
 
-    float *current_chunk;     /* latest chunk for processing */
+    float *current_chunk;
     bool chunk_ready;
 
     float rms_level;
@@ -23,6 +23,13 @@ typedef struct {
 
     bool running;
     int device_index;
+
+    /* Stream health tracking */
+    volatile int silent_frames;     /* consecutive silent frames */
+    volatile bool had_signal;       /* have we ever received actual audio? */
+    int overflow_count;
+    int underflow_count;
+    int recovery_attempts;
 
     /* Device list */
     AudioDeviceInfo devices[MAX_DEVICES];
@@ -37,5 +44,7 @@ bool audio_restart_device(AudioEngine *audio, int device_index);
 void audio_get_chunk(AudioEngine *audio, float *out, int size);
 void audio_scan_devices(AudioEngine *audio);
 void audio_compute_levels(AudioEngine *audio);
+bool audio_check_health(AudioEngine *audio);
+float audio_get_silence_duration(AudioEngine *audio);
 
 #endif
